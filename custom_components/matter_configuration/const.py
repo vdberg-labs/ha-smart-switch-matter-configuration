@@ -4,7 +4,7 @@ CONF_NODE_ID = "node_id"
 CONF_ENDPOINT_ID = "endpoint_id"
 CONF_MATTER_WS_URL = "matter_ws_url"
 
-DEFAULT_MATTER_WS_URL = "ws://homeassistant.local:5580/ws"
+DEFAULT_MATTER_WS_URL = "ws://core-matter-server:5580/ws"
 DEFAULT_ENDPOINT_ID = 3
 
 # Test/dev vendor ID this firmware's Matter build currently uses (NCS/CHIP SDK
