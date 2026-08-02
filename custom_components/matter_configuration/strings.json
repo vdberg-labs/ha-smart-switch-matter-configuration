@@ -3,11 +3,19 @@
     "step": {
       "user": {
         "data": {
-          "node_id": "Matter node ID",
-          "endpoint_id": "Gesture Config endpoint",
           "matter_ws_url": "Matter Server WebSocket URL"
         }
+      },
+      "node": {
+        "data": {
+          "node_id": "Device",
+          "endpoint_id": "Gesture Config endpoint"
+        }
       }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the Matter Server at that URL.",
+      "no_nodes": "Connected, but no commissioned Matter devices were found on that server."
     }
   }
 }
