@@ -73,6 +73,11 @@ class GestureConfigCoordinator(DataUpdateCoordinator[dict[int, int | bool]]):
                 path = self._attribute_path(attr_id)
                 result = await client.read_attribute(self.node_id, path)
                 value = result[path]
+                if not isinstance(value, (int, bool)):
+                    raise UpdateFailed(
+                        f"Attribute {path} did not return a plain value ({value!r}) - the Gesture "
+                        "Config cluster likely doesn't exist on this device's firmware yet"
+                    )
                 values[attr_id] = bool(value) if attr_id in BOOL_ATTRS else int(value)
             return values
         except Exception as err:
