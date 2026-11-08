@@ -19,7 +19,7 @@ PLATFORMS = ["number", "switch"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if CONF_DEVICE_ID not in entry.data:
-        raise ConfigEntryError("This entry predates the Smart Switch Config add-on. Remove it and add it again.")
+        raise ConfigEntryError("This entry predates the Smart Switch Config app. Remove it and add it again.")
 
     coordinator = GestureConfigCoordinator(
         hass,
@@ -49,6 +49,6 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     try:
         async with async_get_clientsession(hass).delete(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
             if response.status != 200:
-                _LOGGER.warning("Add-on could not remove device %s: HTTP %s", entry.data[CONF_DEVICE_ID], response.status)
+                _LOGGER.warning("App could not remove device %s: HTTP %s", entry.data[CONF_DEVICE_ID], response.status)
     except (aiohttp.ClientError, TimeoutError) as err:
-        _LOGGER.warning("Could not reach add-on to remove device %s: %s", entry.data[CONF_DEVICE_ID], err)
+        _LOGGER.warning("Could not reach the app to remove device %s: %s", entry.data[CONF_DEVICE_ID], err)

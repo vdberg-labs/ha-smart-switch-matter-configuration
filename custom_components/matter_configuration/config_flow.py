@@ -26,7 +26,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Long enough for the add-on's own 90 s discovery plus commissioning over Thread.
+# Long enough for the app's own 90 s discovery plus commissioning over Thread.
 COMMISSION_TIMEOUT = aiohttp.ClientTimeout(total=180)
 
 
@@ -81,7 +81,7 @@ class MatterConfigurationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 device_id = await self._async_pair_addon(node_id)
             except Exception:
-                _LOGGER.exception("Failed to pair the add-on with node %s", node_id)
+                _LOGGER.exception("Failed to pair the app with node %s", node_id)
                 errors["base"] = "pairing_failed"
             else:
                 return self.async_create_entry(

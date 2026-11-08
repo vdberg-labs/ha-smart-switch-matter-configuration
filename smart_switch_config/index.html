@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Switch Config</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f5f5f5; --card: #fff; --text: #1c1c1c; --muted: #6b6b6b; --line: #d9d9d9; --accent: #03a9f4; --danger: #c62828; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #111; --card: #1e1e1e; --text: #e6e6e6; --muted: #9b9b9b; --line: #383838; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, sans-serif; }
+  main { max-width: 680px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 500; margin: 0 0 16px; }
+  h2 { font-size: 14px; font-weight: 600; margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--line); }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .grow { flex: 1; min-width: 0; }
+  .add { margin-bottom: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .name { font-size: 16px; font-weight: 600; }
+  .muted { color: var(--muted); font-size: 13px; }
+  select, input[type=number] { padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit; }
+  select { width: 100%; }
+  input[type=number] { width: 110px; }
+  input:invalid { border-color: var(--danger); }
+  button { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.remove { color: var(--danger); padding: 4px 10px; }
+  .field { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 7px 0; }
+  .field small { display: block; color: var(--muted); }
+  .switch { position: relative; width: 38px; height: 22px; flex: none; }
+  .switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+  .track { position: absolute; inset: 0; border-radius: 11px; background: var(--line); transition: background .15s; pointer-events: none; }
+  .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .switch input:checked + .track { background: var(--accent); }
+  .switch input:checked + .track::after { transform: translateX(16px); }
+  .switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .actions { display: flex; gap: 12px; align-items: center; margin-top: 12px; }
+  #status { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Smart Switch Config</h1>
+  <div id="content"></div>
+  <div id="status" role="status"></div>
+</main>
+<script>
+const NUM_CHANNELS = 0xfff10000;
+const GENERAL = [
+  [0xfff10002, "Long press", "Hold this long to count as a hold (ms)", 200, 5000, 10],
+  [0xfff10003, "Multi-tap gap", "Maximum pause between taps (ms)", 50, 2000, 10],
+  [0xfff10001, "Debounce", "Contact settle time (ms)", 1, 50, 1],
+];
+const CHANNELS = [
+  ["Button 1", 0xfff10004, 0xfff10005],
+  ["Button 2", 0xfff10006, 0xfff10007],
+];
+const el = (tag, props = {}, ...children) => { const node = Object.assign(document.createElement(tag), props); node.append(...children); return node; };
+const setStatus = text => document.getElementById("status").textContent = text;
+let state;
+let busy = false;
+
+async function api(path, options) {
+  const response = await fetch(path, options);
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+  return body;
+}
+
+function numberField(values, id, title, help, min, max, step, onchange) {
+  const input = el("input", { type: "number", min, max, step, value: values[id], ariaLabel: title, oninput: () => {
+    if (input.validity.valid && input.value !== "") values[id] = Number(input.value);
+  }, onchange });
+  const text = el("span", { textContent: title });
+  if (help) text.append(el("small", { textContent: help }));
+  return el("label", { className: "field" }, text, input);
+}
+
+function settings(device, card, initial) {
+  const values = { ...initial };
+  const form = el("div");
+  const message = el("span", { className: "muted", role: "status" });
+
+  const save = async () => {
+    if (form.querySelector("input:invalid")) return message.textContent = "Fix the highlighted values first.";
+    const changed = Object.fromEntries(Object.entries(values).filter(([id, value]) => value !== initial[id]));
+    if (Object.keys(changed).length === 0) return message.textContent = "No changes.";
+    saveButton.disabled = true;
+    message.textContent = "Saving…";
+    try {
+      await api(`api/devices/${device.node_id}/config`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ values: changed }) });
+      Object.assign(initial, changed);
+      message.textContent = "Saved.";
+    } catch (error) { message.textContent = `Could not save: ${error.message}`; }
+    saveButton.disabled = false;
+  };
+  const saveButton = el("button", { className: "primary", textContent: "Save", onclick: save });
+
+  const draw = () => {
+    const channels = el("select", { ariaLabel: "Number of buttons", style: "width:110px", onchange: () => { values[NUM_CHANNELS] = Number(channels.value); draw(); } },
+      el("option", { value: 1, textContent: "1" }), el("option", { value: 2, textContent: "2" }));
+    channels.value = values[NUM_CHANNELS];
+    const children = [el("label", { className: "field" }, el("span", { textContent: "Number of buttons" }), channels)];
+    for (const [id, title, help, min, max, step] of GENERAL) children.push(numberField(values, id, title, help, min, max, step));
+    CHANNELS.slice(0, values[NUM_CHANNELS]).forEach(([title, tapsId, holdId]) => {
+      const hold = el("input", { type: "checkbox", checked: values[holdId], ariaLabel: `${title} hold`, onchange: () => values[holdId] = hold.checked });
+      children.push(el("h2", { textContent: title }), numberField(values, tapsId, "Maximum taps", "", 1, 5, 1),
+        el("label", { className: "field" }, el("span", { textContent: "Hold gesture" }), el("span", { className: "switch" }, hold, el("span", { className: "track" }))));
+    });
+    form.replaceChildren(...children);
+  };
+  draw();
+  card.append(form, el("div", { className: "actions" }, saveButton, message));
+}
+
+function deviceCard(device) {
+  const removeButton = el("button", { className: "remove", textContent: "Remove", onclick: async () => {
+    if (busy) return;
+    busy = true;
+    setStatus(`Removing ${device.name}…`);
+    try { await api(`api/devices/${device.node_id}`, { method: "DELETE" }); setStatus(""); await refresh(); }
+    catch (error) { setStatus(`Could not remove: ${error.message}`); }
+    busy = false;
+  } });
+  const body = el("div", {});
+  const card = el("section", { className: "card" }, el("div", { className: "row" }, el("div", { className: "grow name", textContent: device.name }), removeButton), body);
+
+  const load = async () => {
+    body.replaceChildren(el("div", { className: "muted", textContent: "Reading settings…", style: "margin-top:12px" }));
+    try {
+      const values = await api(`api/devices/${device.node_id}/config`);
+      body.replaceChildren();
+      settings(device, body, values);
+    } catch (error) {
+      body.replaceChildren(el("div", { className: "actions" }, el("button", { textContent: "Retry", onclick: load }), el("span", { className: "muted", textContent: `Could not read settings: ${error.message}` })));
+    }
+  };
+  load();
+  return card;
+}
+
+function addRow() {
+  if (state.available.length === 0) {
+    const text = state.devices.length === 0 ? "No Matter switches found. Pair one with Home Assistant first." : "All switches have been added.";
+    return el("div", { className: "muted add", textContent: text });
+  }
+  const select = el("select", { ariaLabel: "Switch to add" }, ...state.available.map(node => el("option", { value: node.node_id, textContent: node.name })));
+  const add = el("button", { textContent: "Add switch", onclick: async () => {
+    if (busy) return;
+    busy = true;
+    add.disabled = true;
+    setStatus("Pairing with the switch. This can take up to 2 minutes…");
+    try {
+      await api("api/devices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ node_id: Number(select.value) }) });
+      setStatus("");
+      await refresh();
+    } catch (error) { setStatus(`Could not add the switch: ${error.message}`); add.disabled = false; }
+    busy = false;
+  } });
+  return el("div", { className: "row add" }, el("div", { className: "grow" }, select), add);
+}
+
+async function refresh() {
+  state = await api("api/state");
+  document.getElementById("content").replaceChildren(addRow(), ...state.devices.map(deviceCard));
+}
+
+refresh().catch(error => setStatus(`Could not load: ${error.message}`));
+</script>
+</body>
+</html>

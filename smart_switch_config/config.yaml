@@ -1,7 +1,7 @@
 name: Smart Switch Config
-version: "0.1.0"
+version: "0.2.0"
 slug: smart_switch_config
-description: Lets the Smart Switch integration change gesture settings, as a second Matter controller next to the official Matter Server.
+description: Change the gesture settings of your Smart Switches. Runs as a second Matter controller next to the official Matter Server.
 url: https://github.com/vdberg-labs/ha-smart-switch-matter-configuration
 arch:
   - aarch64
@@ -10,6 +10,11 @@ startup: application
 boot: auto
 init: false
 host_network: true
+homeassistant_api: true
+ingress: true
+ingress_port: 15581
+panel_icon: mdi:tune
+panel_title: Switch Config
 options: {}
 schema:
   network_interface: str?
