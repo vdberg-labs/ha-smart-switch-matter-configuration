@@ -1,18 +1,30 @@
 from __future__ import annotations
 
+import logging
+
+import aiohttp
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryError
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CONF_ENDPOINT_ID, CONF_MATTER_WS_URL, CONF_NODE_ID, DOMAIN
+from .const import CONF_ADDON_URL, CONF_DEVICE_ID, CONF_ENDPOINT_ID, CONF_NODE_ID, DOMAIN
 from .coordinator import GestureConfigCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["number", "switch"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    if CONF_DEVICE_ID not in entry.data:
+        raise ConfigEntryError("This entry predates the Smart Switch Config add-on. Remove it and add it again.")
+
     coordinator = GestureConfigCoordinator(
         hass,
-        entry.data[CONF_MATTER_WS_URL],
+        entry.data[CONF_ADDON_URL],
+        entry.data[CONF_DEVICE_ID],
         entry.data[CONF_NODE_ID],
         entry.data[CONF_ENDPOINT_ID],
     )
@@ -26,6 +38,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        coordinator: GestureConfigCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
-        await coordinator.async_close()
+        hass.data[DOMAIN].pop(entry.entry_id)
     return unloaded
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    if CONF_DEVICE_ID not in entry.data:
+        return
+    url = f"{entry.data[CONF_ADDON_URL].rstrip('/')}/devices/{entry.data[CONF_DEVICE_ID]}"
+    try:
+        async with async_get_clientsession(hass).delete(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+            if response.status != 200:
+                _LOGGER.warning("Add-on could not remove device %s: HTTP %s", entry.data[CONF_DEVICE_ID], response.status)
+    except (aiohttp.ClientError, TimeoutError) as err:
+        _LOGGER.warning("Could not reach add-on to remove device %s: %s", entry.data[CONF_DEVICE_ID], err)

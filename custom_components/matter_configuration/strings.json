@@ -3,7 +3,8 @@
     "step": {
       "user": {
         "data": {
-          "matter_ws_url": "Matter Server WebSocket URL"
+          "matter_ws_url": "Matter Server WebSocket URL",
+          "addon_url": "Smart Switch Config add-on URL"
         }
       },
       "node": {
@@ -15,7 +16,9 @@
     },
     "error": {
       "cannot_connect": "Could not connect to the Matter Server at that URL.",
-      "no_nodes": "Connected, but no commissioned Matter devices were found on that server."
+      "no_nodes": "Connected, but no commissioned Matter devices were found on that server.",
+      "addon_unavailable": "Could not reach the Smart Switch Config add-on. Install and start it first.",
+      "pairing_failed": "The add-on could not pair with this device. Check that it is online, then try again."
     }
   }
 }

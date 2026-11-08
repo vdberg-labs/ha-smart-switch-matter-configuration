@@ -3,8 +3,11 @@ DOMAIN = "matter_configuration"
 CONF_NODE_ID = "node_id"
 CONF_ENDPOINT_ID = "endpoint_id"
 CONF_MATTER_WS_URL = "matter_ws_url"
+CONF_ADDON_URL = "addon_url"
+CONF_DEVICE_ID = "device_id"
 
 DEFAULT_MATTER_WS_URL = "ws://core-matter-server:5580/ws"
+DEFAULT_ADDON_URL = "http://172.30.32.1:5581"
 DEFAULT_ENDPOINT_ID = 3
 
 # Test/dev vendor ID this firmware's Matter build uses (NCS/CHIP SDK sample
