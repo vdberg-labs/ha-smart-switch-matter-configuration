@@ -36,6 +36,7 @@
   .switch input:checked + .track::after { transform: translateX(16px); }
   .switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
   .actions { display: flex; gap: 12px; align-items: center; margin-top: 12px; }
+  .firmware { margin-top: 4px; min-height: 36px; }
   #status { color: var(--muted); }
 </style>
 </head>
@@ -60,6 +61,7 @@ const el = (tag, props = {}, ...children) => { const node = Object.assign(docume
 const setStatus = text => document.getElementById("status").textContent = text;
 let state;
 let busy = false;
+const kilobytes = bytes => `${Math.round(bytes / 1024)} KB`;
 
 async function api(path, options) {
   const response = await fetch(path, options);
@@ -124,7 +126,7 @@ function deviceCard(device) {
     busy = false;
   } });
   const body = el("div", {});
-  const card = el("section", { className: "card" }, el("div", { className: "row" }, el("div", { className: "grow name", textContent: device.name }), removeButton), body);
+  const card = el("section", { className: "card" }, el("div", { className: "row" }, el("div", { className: "grow name", textContent: device.name }), removeButton), firmwareRow(device), body);
 
   const load = async () => {
     body.replaceChildren(el("div", { className: "muted", textContent: "Reading settings…", style: "margin-top:12px" }));
@@ -138,6 +140,70 @@ function deviceCard(device) {
   };
   load();
   return card;
+}
+
+function updateText(update) {
+  if (update.state === "waiting") return `Offering ${update.version_string}, waiting for the switch…`;
+  if (update.state === "downloading") {
+    const percent = update.total ? ` ${Math.floor(100 * update.transferred / update.total)}%` : "";
+    return `Downloading ${update.version_string}${percent}`;
+  }
+  return `Installing ${update.version_string}. The switch restarts and checks the new firmware for a minute.`;
+}
+
+function firmwareRow(device) {
+  const row = el("div", { className: "row firmware muted", textContent: "Reading firmware…" });
+  const show = async () => {
+    let info;
+    try { info = await api(`api/devices/${device.node_id}/firmware`); }
+    catch (error) { return row.replaceChildren(el("span", { className: "grow", textContent: `Could not read firmware: ${error.message}` }), el("button", { textContent: "Retry", onclick: show })); }
+    if (!row.isConnected) return;
+
+    const children = [el("span", { className: "grow", textContent: info.version_string ? `Firmware ${info.version_string}` : "Firmware: restarting…" })];
+    const update = info.update;
+    if (update && update.state !== "failed") {
+      children.push(el("span", { textContent: updateText(update) }));
+      setTimeout(show, 3000);
+    } else {
+      if (update) children.push(el("span", { textContent: `Update to ${update.version_string} failed: ${update.error}` }));
+      const newest = state.firmware
+        .filter(image => image.vendor_id === info.vendor_id && image.product_id === info.product_id && image.version > info.version)
+        .sort((a, b) => b.version - a.version)[0];
+      if (newest) {
+        const start = el("button", { textContent: `Update to ${newest.version_string}`, onclick: async () => {
+          start.disabled = true;
+          try { await api(`api/devices/${device.node_id}/firmware`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filename: newest.filename }) }); }
+          catch (error) { setStatus(`Could not start the update: ${error.message}`); }
+          show();
+        } });
+        children.push(start);
+      }
+    }
+    row.replaceChildren(...children);
+  };
+  show();
+  return row;
+}
+
+function firmwareCard() {
+  const upload = el("input", { type: "file", accept: ".ota", hidden: true, onchange: async () => {
+    const file = upload.files[0];
+    if (!file) return;
+    setStatus(`Uploading ${file.name}…`);
+    try { await api("api/firmware", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file }); setStatus(""); await refresh(); }
+    catch (error) { setStatus(`Could not upload: ${error.message}`); }
+  } });
+  const rows = state.firmware.map(image => el("div", { className: "row field" },
+    el("span", { className: "grow", textContent: image.version_string }),
+    el("span", { className: "muted", textContent: kilobytes(image.size) }),
+    el("button", { className: "remove", textContent: "Delete", onclick: async () => {
+      try { await api(`api/firmware/${encodeURIComponent(image.filename)}`, { method: "DELETE" }); await refresh(); }
+      catch (error) { setStatus(`Could not delete: ${error.message}`); }
+    } })));
+  if (rows.length === 0) rows.push(el("div", { className: "muted", textContent: "Upload a matter.ota file to update your switches." }));
+  return el("section", { className: "card" },
+    el("div", { className: "row" }, el("div", { className: "grow name", textContent: "Firmware" }), el("button", { textContent: "Upload", onclick: () => upload.click() }), upload),
+    ...rows);
 }
 
 function addRow() {
@@ -162,8 +228,9 @@ function addRow() {
 }
 
 async function refresh() {
-  state = await api("api/state");
-  document.getElementById("content").replaceChildren(addRow(), ...state.devices.map(deviceCard));
+  const [devices, firmware] = await Promise.all([api("api/state"), api("api/firmware")]);
+  state = { ...devices, firmware };
+  document.getElementById("content").replaceChildren(addRow(), ...state.devices.map(deviceCard), firmwareCard());
 }
 
 refresh().catch(error => setStatus(`Could not load: ${error.message}`));

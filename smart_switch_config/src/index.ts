@@ -3,8 +3,11 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Environment, Logger, Seconds, ServerNode } from "@matter/main";
 import { ControllerBehavior } from "@matter/node";
-import { Read, Write, WriteResult } from "@matter/protocol";
+import { Write, WriteResult } from "@matter/protocol";
 import { AttributeId, ClusterId, EndpointNumber, TlvBoolean, TlvUInt16, TlvUInt8 } from "@matter/types";
+import { readAttributes } from "./attributes.js";
+import { FirmwareUpdates } from "./firmware.js";
+import { HttpError } from "./http-error.js";
 
 const logger = Logger.get("SmartSwitchConfig");
 
@@ -26,6 +29,7 @@ const ATTRIBUTES = new Map<number, { tlv: typeof TlvUInt8 | typeof TlvUInt16; mi
 const COMMISSION_TIMEOUT = Seconds(90);
 const WS_TIMEOUT_MS = 30_000;
 const MAX_BODY_BYTES = 4096;
+const MAX_FIRMWARE_BYTES = 2 * 1024 * 1024;
 
 const DATA_DIR = process.env.SMART_SWITCH_DATA ?? "/data";
 const DEVICES_PATH = join(DATA_DIR, "devices.json");
@@ -43,15 +47,6 @@ interface PairedDevice {
 interface MatterNode {
     node_id: number;
     attributes: Record<string, unknown>;
-}
-
-class HttpError extends Error {
-    constructor(
-        readonly status: number,
-        message: string,
-    ) {
-        super(message);
-    }
 }
 
 function readOptions(): { network_interface?: string } {
@@ -72,12 +67,19 @@ function saveDevices(devices: PairedDevice[]) {
     renameSync(temp, DEVICES_PATH);
 }
 
-async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-    let raw = "";
+async function readBytes(req: IncomingMessage, limit: number) {
+    const chunks: Buffer[] = [];
+    let length = 0;
     for await (const chunk of req) {
-        raw += chunk;
-        if (raw.length > MAX_BODY_BYTES) throw new HttpError(413, "Body too large");
+        length += chunk.length;
+        if (length > limit) throw new HttpError(413, "Body too large");
+        chunks.push(chunk);
     }
+    return Buffer.concat(chunks);
+}
+
+async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+    const raw = (await readBytes(req, MAX_BODY_BYTES)).toString("utf8");
     try {
         const body = JSON.parse(raw || "{}");
         if (typeof body !== "object" || body === null) throw new Error();
@@ -190,6 +192,7 @@ async function main() {
         commissioning: { enabled: false },
         controller: { adminFabricLabel: "Smart Switch Config" },
     });
+    const firmware = await FirmwareUpdates.create(server);
     await server.start();
 
     let devices = loadDevices();
@@ -254,29 +257,14 @@ async function main() {
             logger.warn(`Node ${nodeId} could not be unpaired cleanly: ${error}`);
         }
         await peer.delete();
+        await firmware.forget(nodeId);
         devices = devices.filter(d => d.node_id !== nodeId);
         saveDevices(devices);
     }
 
     async function readConfig(nodeId: number) {
         const { device, peer } = deviceOf(nodeId);
-        const attributes = [...ATTRIBUTES.keys()].map(attributeId => ({
-            endpointId: EndpointNumber(device.endpoint),
-            clusterId: ClusterId(CLUSTER_ID),
-            attributeId: AttributeId(attributeId),
-        }));
-        const values: Record<string, unknown> = {};
-        const request = { ...Read({ attributes }), includeKnownVersions: true };
-        for await (const chunk of peer.interaction.read(request)) {
-            for await (const report of chunk) {
-                if (report.kind === "attr-value") {
-                    values[report.path.attributeId] = report.value;
-                } else if (report.kind === "attr-status") {
-                    throw new HttpError(502, `Attribute ${report.path.attributeId} failed with status ${report.status}`);
-                }
-            }
-        }
-        return values;
+        return readAttributes(peer, device.endpoint, CLUSTER_ID, [...ATTRIBUTES.keys()]);
     }
 
     async function writeConfig(nodeId: number, values: unknown) {
@@ -316,6 +304,7 @@ async function main() {
         if (parts[0] !== "api") throw new HttpError(404, "Not found");
 
         if (method === "GET" && parts[1] === "state" && parts.length === 2) return send(res, 200, await listState());
+        if (parts[1] === "firmware") return routeFirmware(req, res, parts.slice(2));
         if (parts[1] !== "devices") throw new HttpError(404, "Not found");
 
         if (method === "POST" && parts.length === 2) {
@@ -329,12 +318,35 @@ async function main() {
             await removeDevice(nodeId);
             return send(res, 200, { status: "ok" });
         }
+        if (parts[3] === "firmware" && parts.length === 4) {
+            const { peer } = deviceOf(nodeId);
+            if (method === "GET") return send(res, 200, await firmware.firmwareOf(nodeId, peer));
+            if (method === "POST") {
+                const { filename } = await readBody(req);
+                if (typeof filename !== "string") throw new HttpError(400, "filename is required");
+                await firmware.start(nodeId, peer, filename);
+                return send(res, 202, { status: "ok" });
+            }
+        }
         if (parts[3] === "config" && parts.length === 4) {
             if (method === "GET") return send(res, 200, await readConfig(nodeId));
             if (method === "PUT") {
                 await writeConfig(nodeId, (await readBody(req)).values);
                 return send(res, 200, { status: "ok" });
             }
+        }
+        throw new HttpError(404, "Not found");
+    }
+
+    async function routeFirmware(req: IncomingMessage, res: ServerResponse, parts: string[]) {
+        if (req.method === "GET" && parts.length === 0) return send(res, 200, await firmware.images());
+        if (req.method === "POST" && parts.length === 0) {
+            await firmware.upload(await readBytes(req, MAX_FIRMWARE_BYTES));
+            return send(res, 201, { status: "ok" });
+        }
+        if (req.method === "DELETE" && parts.length === 1) {
+            await firmware.delete(decodeURIComponent(parts[0]));
+            return send(res, 200, { status: "ok" });
         }
         throw new HttpError(404, "Not found");
     }
