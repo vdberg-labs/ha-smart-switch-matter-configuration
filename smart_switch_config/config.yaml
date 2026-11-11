@@ -1,5 +1,5 @@
 name: Smart Switch Config
-version: "0.3.1"
+version: "0.3.2"
 slug: smart_switch_config
 description: Change the gesture settings of your Smart Switches and update their firmware. Runs as a second Matter controller next to the official Matter Server.
 url: https://github.com/vdberg-labs/ha-smart-switch-matter-configuration

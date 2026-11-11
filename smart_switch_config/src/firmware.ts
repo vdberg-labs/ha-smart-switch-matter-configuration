@@ -20,6 +20,7 @@ const SOFTWARE_VERSION_STRING = 0xa;
 
 const REQUEST_TIMEOUT_MS = 3 * 60_000;
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
+const RESTART_READ_TIMEOUT_MS = 10_000;
 
 export interface FirmwareImage {
     filename: string;
@@ -154,7 +155,10 @@ export class FirmwareUpdates {
         const update = this.#updates.get(nodeId);
         let current;
         try {
-            current = await readFirmware(peer);
+            // While the switch restarts a read can hang for minutes, which would freeze the progress shown.
+            current = await (update?.state === "installing"
+                ? withTimeout(readFirmware(peer), RESTART_READ_TIMEOUT_MS)
+                : readFirmware(peer));
         } catch (error) {
             if (update?.state !== "installing") throw error;
         }
@@ -215,7 +219,15 @@ export class FirmwareUpdates {
             update.session = session;
             update.error = undefined;
             this.#enter(update, "downloading");
-            session.progressFinished.on(() => this.#enter(update, "installing"));
+            // The switch acknowledges the last block well before matter.js reports the transfer as finished.
+            session.progressInfo.on((transferred, total) => {
+                if (update.state === "downloading" && total !== undefined && transferred >= total) {
+                    this.#enter(update, "installing");
+                }
+            });
+            session.progressFinished.on(() => {
+                if (update.state === "downloading") this.#enter(update, "installing");
+            });
             session.progressCancelled.on(() => {
                 this.#fail(update, "The download was interrupted").catch(error => logger.warn(`${error}`));
             });
@@ -260,6 +272,14 @@ async function readFirmware(peer: ClientNode) {
         version: values[SOFTWARE_VERSION] as number,
         version_string: values[SOFTWARE_VERSION_STRING] as string,
     };
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number) {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("The switch did not answer")), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 function progressOf({ image, state, session, error }: Update) {
