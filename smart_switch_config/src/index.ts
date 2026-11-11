@@ -250,13 +250,18 @@ async function main() {
     }
 
     async function removeDevice(nodeId: number) {
-        const { peer } = deviceOf(nodeId);
-        try {
-            await peer.decommission();
-        } catch (error) {
-            logger.warn(`Node ${nodeId} could not be unpaired cleanly: ${error}`);
+        const device = devices.find(d => d.node_id === nodeId);
+        if (device === undefined) throw new HttpError(404, `Switch ${nodeId} has not been added`);
+        const peer = server.peers.get(device.peer_id);
+        if (peer !== undefined) {
+            try {
+                // Also deletes the pairing; only a failure leaves it behind.
+                await peer.decommission();
+            } catch (error) {
+                logger.warn(`Node ${nodeId} could not be unpaired cleanly: ${error}`);
+                await peer.delete();
+            }
         }
-        await peer.delete();
         await firmware.forget(nodeId);
         devices = devices.filter(d => d.node_id !== nodeId);
         saveDevices(devices);
